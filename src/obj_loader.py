@@ -25,9 +25,7 @@ def load_obj(path):
                         n_i = int(vals[2]) - 1 if len(vals) > 2 and vals[2] else None
                         idxs.append((v_i, t_i, n_i))
                     except Exception:
-                        # 👇 Debug print goes here
                         print("Bad face line:", line.strip())
-                # triangulate faces
                 for i in range(1, len(idxs) - 1):
                     faces.extend([idxs[0], idxs[i], idxs[i + 1]])
 
@@ -49,4 +47,5 @@ def load_obj(path):
         np.array(nrm, dtype=np.float32),
         np.array(uv, dtype=np.float32),
         indices,
+
     )
