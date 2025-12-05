@@ -16,9 +16,27 @@ def load_geometry():
     print("Using default cube geometry.")
     return cube_vertices, cube_normals, cube_texcoords, cube_indices
 
-# --- Geometry + center ---
+# --- Geometry + center + scale ---
 vertices, normals, texcoords, indices = load_geometry()
-center = np.mean(vertices.reshape(-1, 3), axis=0)
+verts3d = vertices.reshape(-1, 3)
+min_corner = verts3d.min(axis=0)
+max_corner = verts3d.max(axis=0)
+center = (min_corner + max_corner) / 2.0
+size = max_corner - min_corner
+max_dim = np.max(size)
+
+# Scale so model fills half the screen height/width
+target_ndc_size = 5.0   # half of screen in NDC
+scale = target_ndc_size / max_dim
+
+def scale_matrix(s):
+    return np.array([
+        [s, 0, 0, 0],
+        [0, s, 0, 0],
+        [0, 0, s, 0],
+        [0, 0, 0, 1]
+    ], dtype=np.float32)
+
 
 # --- Window + GL setup ---
 win = pyglet.window.Window(options.win_width, options.win_height, options.window_name)
@@ -58,30 +76,14 @@ def on_draw():
     win.clear()
     prog.use()
 
-    # --- Projection and view ---
+    # Projection and view
     proj = perspective(np.radians(30), win.width / win.height, 0.1, 100.0)
     view = np.eye(4, dtype=np.float32)
-    view[2][3] = -5   # camera back along Z
+    view[2][3] = -1
+    view[1][3] = 5.0
+    view = rotation_x(np.radians(-20)) @ view
 
-    # --- Compute bounding box ---
-    verts3d = vertices.reshape(-1, 3)
-    min_corner = verts3d.min(axis=0)
-    max_corner = verts3d.max(axis=0)
-    center = (min_corner + max_corner) / 2.0
-    size = max_corner - min_corner
-
-    max_dim = np.max(size)
-    target_ndc_size = 1.0
-    scale = target_ndc_size / max_dim
-
-    def scale_matrix(s):
-        return np.array([
-            [s, 0, 0, 0],
-            [0, s, 0, 0],
-            [0, 0, s, 0],
-            [0, 0, 0, 1]
-        ], dtype=np.float32)
-
+    # Model transform: center + scale + rotation
     model = (
         translation_matrix(-center)
         @ scale_matrix(scale)
@@ -95,7 +97,7 @@ def on_draw():
 
     gl.glBindVertexArray(vao_id)
     gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
-    
+
 def update(dt):
     global rot
     rot += dt
