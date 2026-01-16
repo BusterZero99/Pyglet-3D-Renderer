@@ -25,8 +25,7 @@ center = (min_corner + max_corner) / 2.0
 size = max_corner - min_corner
 max_dim = np.max(size)
 
-# Scale so model fills half the screen height/width
-target_ndc_size = 5.0   # half of screen in NDC
+target_ndc_size = 5.0
 scale = target_ndc_size / max_dim
 
 def scale_matrix(s):
@@ -39,11 +38,12 @@ def scale_matrix(s):
 
 
 # --- Window + GL setup ---
-win = pyglet.window.Window(options.win_width, options.win_height, options.window_name)
+win = pyglet.window.Window(options.win_width, options.win_height, options.window_name, resizable=True)
 gl.glEnable(gl.GL_DEPTH_TEST)
 gl.glClearColor(0.1, 0.1, 0.1, 1.0)
 
-prog = ShaderProgram(Shader(VERT_SRC, "vertex"), Shader(FRAG_SRC, "fragment"))
+prog_rainbow = ShaderProgram(Shader(VERT_SRC, "vertex"), Shader(FRAG_SRC_RAINBOW, "fragment"))
+prog_fill = ShaderProgram(Shader(VERT_SRC, "vertex"), Shader(FRAG_SRC_FILL, "fragment"))
 
 vao = gl.GLuint(0)
 gl.glGenVertexArrays(1, vao)
@@ -74,29 +74,85 @@ rot = 180.0
 def on_draw():
     global rot
     win.clear()
-    prog.use()
-
+    
     # Projection and view
     proj = perspective(np.radians(30), win.width / win.height, 0.1, 100.0)
     view = np.eye(4, dtype=np.float32)
-    view[2][3] = -1
-    view[1][3] = 5.0
-    view = rotation_x(np.radians(-20)) @ view
+    view[2][3] = -1    # back away
+    view[1][3] = -13.0  # lower the camera a bit
+    view = rotation_x(np.radians(20)) @ view
 
     # Model transform: center + scale + rotation
     model = (
         translation_matrix(-center)
-        @ scale_matrix(scale)
+        @ scale_matrix(scale*options.zoom)
         @ rotation_x(np.radians(270))
         @ rotation_z(rot)
     )
 
     mvp = proj @ view @ model
-    prog["mvp"] = mvp.T.astype(np.float32).flatten()
-    prog["time"] = np.float32(rot)
 
     gl.glBindVertexArray(vao_id)
-    gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
+    
+    if options.shaderMode == 1:
+        # Rainbow
+        prog_rainbow.use()
+        prog_rainbow["mvp"] = mvp.T.astype(np.float32).flatten()
+        prog_rainbow["time"] = np.float32(rot)
+        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
+        gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
+
+    elif options.shaderMode == 2:
+        # Fill (light gray)
+        prog_fill.use()
+        prog_fill["mvp"] = mvp.T.astype(np.float32).flatten()
+        prog_fill["color"] = (0.5, 0.5, 0.5)  # grey
+        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
+        gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
+        
+    elif options.shaderMode == 3:
+        # Fill (grey)
+        prog_fill.use()
+        prog_fill["mvp"] = mvp.T.astype(np.float32).flatten()
+        prog_fill["color"] = (0.5, 0.5, 0.5)
+        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
+        gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
+
+        # Wireframe overlay (blue)
+        gl.glEnable(gl.GL_POLYGON_OFFSET_LINE)
+        gl.glPolygonOffset(-1, -1)
+        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
+        gl.glLineWidth(0.1)
+        prog_fill.use()
+        prog_fill["mvp"] = mvp.T.astype(np.float32).flatten()
+        prog_fill["color"] = (0.1, 0.3, 1.0)  # blue
+        gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
+        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
+        gl.glDisable(gl.GL_POLYGON_OFFSET_LINE)
+
+@win.event
+def on_key_press(symbol, modifiers):
+    global ctrl_held
+    if symbol == key.T:
+        options.shaderMode = options.shaderMode % 3 + 1
+        print("Shader mode:", options.shaderMode)
+    if symbol in (pyglet.window.key.LCTRL, pyglet.window.key.RCTRL):
+        ctrl_held = True
+
+@win.event
+def on_key_release(symbol, modifiers):
+    global ctrl_held
+    if symbol in (pyglet.window.key.LCTRL, pyglet.window.key.RCTRL):
+        ctrl_held = False
+
+@win.event
+def on_mouse_scroll(x, y, scroll_x, scroll_y):
+    # Check if Ctrl is held (modifiers is not passed to this event, so use pyglet.window.key)
+    if ctrl_held:
+        factor = 0.9 if scroll_y > 0 else 1.1
+        options.zoom *= factor
+        options.zoom = max(0.1, min(options.zoom, 10.0))  # Clamp zoom
+        
 
 def update(dt):
     global rot
