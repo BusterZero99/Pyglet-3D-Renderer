@@ -16,7 +16,7 @@ void main() {
 }
 """
 
-FRAG_SRC = """
+FRAG_SRC_RAINBOW = """
 #version 330 core
 in vec3 fragNormal;
 in vec3 fragPos;
@@ -36,5 +36,14 @@ void main() {
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
     float diff = max(dot(normalize(fragNormal), lightDir), 0.0);
     FragColor = vec4(color * diff, 1.0);
+}
+"""
+
+FRAG_SRC_FILL = """
+#version 330 core
+uniform vec3 color;
+out vec4 FragColor;
+void main() {
+    FragColor = vec4(color, 1.0);
 }
 """
