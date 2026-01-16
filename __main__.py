@@ -147,12 +147,14 @@ def on_key_release(symbol, modifiers):
 
 @win.event
 def on_mouse_scroll(x, y, scroll_x, scroll_y):
-    # Check if Ctrl is held (modifiers is not passed to this event, so use pyglet.window.key)
     if ctrl_held:
+        factor = 1.1 if scroll_y > 0 else 0.9
+        options.zoom *= factor
+        options.zoom = max(0.1, min(options.zoom, 10.0))
+    else:
         factor = 0.9 if scroll_y > 0 else 1.1
         options.zoom *= factor
-        options.zoom = max(0.1, min(options.zoom, 10.0))  # Clamp zoom
-        
+        options.zoom = max(0.1, min(options.zoom, 10.0))
 
 def update(dt):
     global rot
