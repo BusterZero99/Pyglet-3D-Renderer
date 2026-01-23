@@ -8,3 +8,4 @@ A 3D model renderer built using Pyglet in Python.
 * Add support for more complicated models
 * Add UI?
 * Make it less "bulky"
+* Add proper "zoom" to zoom in where the mouse cursor is
