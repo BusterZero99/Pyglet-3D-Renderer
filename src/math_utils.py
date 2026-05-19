@@ -41,3 +41,28 @@ def translation_matrix(offset):
     m = np.eye(4, dtype=np.float32)
     m[:3, 3] = offset
     return m
+
+
+def look_at(eye, target, up=np.array([0.0, 1.0, 0.0], dtype=np.float32)):
+    eye = np.array(eye, dtype=np.float32)
+    target = np.array(target, dtype=np.float32)
+    up = np.array(up, dtype=np.float32)
+
+    forward = target - eye
+    forward_norm = np.linalg.norm(forward)
+    if forward_norm > 1e-8:
+        forward /= forward_norm
+
+    right = np.cross(forward, up)
+    right_norm = np.linalg.norm(right)
+    if right_norm > 1e-8:
+        right /= right_norm
+
+    up_dir = np.cross(right, forward)
+
+    m = np.eye(4, dtype=np.float32)
+    m[0, 0:3] = right
+    m[1, 0:3] = up_dir
+    m[2, 0:3] = -forward
+    m[0:3, 3] = -m[0:3, 0:3] @ eye
+    return m
