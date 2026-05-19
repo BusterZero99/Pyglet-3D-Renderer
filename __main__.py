@@ -1,164 +1,140 @@
 from src.imports import *
+import subprocess
 
-# --- Load geometry from models/ or fallback to cube ---
-def load_geometry():
-    path = os.path.join(os.path.dirname(__file__), "models")
-    try:
-        files = os.listdir(path)
-        obj_file = next((f for f in files if re.search(r"\.obj$", f, re.IGNORECASE)), None)
-        if obj_file:
-            full_path = os.path.join(path, obj_file)
-            v, n, t, i = load_obj(full_path)
-            print("Loaded OBJ:", full_path)
-            return v, n, t, i
-    except Exception as e:
-        print("Failed to load OBJ:", e)
-    print("Using default cube geometry.")
-    return cube_vertices, cube_normals, cube_texcoords, cube_indices
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+RENDERER = os.path.join(BASE_DIR, "renderer.py")
 
-# --- Geometry + center + scale ---
-vertices, normals, texcoords, indices = load_geometry()
-verts3d = vertices.reshape(-1, 3)
-min_corner = verts3d.min(axis=0)
-max_corner = verts3d.max(axis=0)
-center = (min_corner + max_corner) / 2.0
-size = max_corner - min_corner
-max_dim = np.max(size)
+# UI Constants
+COLOR_WHITE = (255, 255, 255, 255)
+COLOR_HIGHLIGHT = (255, 235, 140, 255)
+COLOR_DIM = (180, 180, 180, 255)
+COLOR_ERROR = (255, 120, 120, 255)
+LABEL_HEIGHT = 20
+FILE_ITEM_HEIGHT = 20
+MARGIN = 10
+TEXT_OFFSET_Y = 30
+BROWSER_ITEM_HEIGHT = 20
 
-target_ndc_size = 5.0
-scale = target_ndc_size / max_dim
+picker_window = None
 
-def scale_matrix(s):
-    return np.array([
-        [s, 0, 0, 0],
-        [0, s, 0, 0],
-        [0, 0, s, 0],
-        [0, 0, 0, 1]
-    ], dtype=np.float32)
+def launch(path):
+    env = os.environ.copy(); env["PYTHON_3D_RENDERER_MODEL"] = path
+    subprocess.Popen([sys.executable, RENDERER], env=env, cwd=BASE_DIR)
+    if picker_window is not None:
+        picker_window.close()
+    pyglet.app.exit()
 
+def draw_label(text, x, y, color=COLOR_WHITE):
+    label = pyglet.text.Label(text, x=x, y=y, color=color)
+    label.draw()
 
-# --- Window + GL setup ---
-win = pyglet.window.Window(options.win_width, options.win_height, options.window_name, resizable=True)
-gl.glEnable(gl.GL_DEPTH_TEST)
-gl.glClearColor(0.1, 0.1, 0.1, 1.0)
+def run_picker():
+    global picker_window
+    obj_files = sorted([f for f in os.listdir(MODELS_DIR) if f.lower().endswith(".obj")]) if os.path.exists(MODELS_DIR) else []
+    sel = 0
+    input_mode = False
+    input_text = ""
+    file_browser = False
+    current_dir = BASE_DIR
+    file_list = []
+    file_sel = 0
 
-prog_rainbow = ShaderProgram(Shader(VERT_SRC, "vertex"), Shader(FRAG_SRC_RAINBOW, "fragment"))
-prog_fill = ShaderProgram(Shader(VERT_SRC, "vertex"), Shader(FRAG_SRC_FILL, "fragment"))
+    def update_file_list():
+        nonlocal file_list
+        try:
+            file_list = sorted(os.listdir(current_dir))
+        except (OSError, PermissionError):
+            file_list = []
 
-vao = gl.GLuint(0)
-gl.glGenVertexArrays(1, vao)
-vao_id = vao.value
-gl.glBindVertexArray(vao_id)
+    window = pyglet.window.Window(options.win_width, options.win_height, caption="Python 3D Renderer")
+    picker_window = window
+    label = pyglet.text.Label("OBJ picker (↑↓ select, Enter load, O browse files)", x=MARGIN, y=options.win_height-TEXT_OFFSET_Y, color=COLOR_WHITE)
+    info = pyglet.text.Label("ESC exit | Browser: Backspace up, / root", x=MARGIN, y=MARGIN, color=COLOR_DIM)
+    input_label = pyglet.text.Label("", x=MARGIN, y=options.win_height-60, color=COLOR_WHITE)
 
-def make_vbo(data, index, size):
-    buf = gl.GLuint(0)
-    gl.glGenBuffers(1, buf)
-    gl.glBindBuffer(gl.GL_ARRAY_BUFFER, buf)
-    gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data.ctypes.data, gl.GL_STATIC_DRAW)
-    gl.glVertexAttribPointer(index, size, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
-    gl.glEnableVertexAttribArray(index)
+    @window.event
+    def on_draw():
+        window.clear(); label.draw(); info.draw()
+        if file_browser:
+            draw_label(f"Current dir: {current_dir}", MARGIN, options.win_height-60)
+            for i, f in enumerate(file_list):
+                y = options.win_height - 90 - i * BROWSER_ITEM_HEIGHT
+                if y < 20:
+                    break
+                is_dir = os.path.isdir(os.path.join(current_dir, f))
+                prefix = "[DIR]" if is_dir else "     "
+                color = COLOR_HIGHLIGHT if i == file_sel else COLOR_WHITE
+                marker = ">" if i == file_sel else " "
+                draw_label(f"{marker} {prefix} {f}", 20, y, color)
+        elif input_mode:
+            input_label.text = f"Enter OBJ path: {input_text}_"
+            input_label.draw()
+        elif not obj_files:
+            draw_label("No OBJ in models/ (press O)", 20, 320, COLOR_ERROR)
+            return
+        else:
+            for i, f in enumerate(obj_files):
+                y = options.win_height - 60 - i * 24
+                color = COLOR_HIGHLIGHT if i == sel else COLOR_WHITE
+                marker = ">" if i == sel else " "
+                draw_label(f"{marker} {f}", 20, y, color)
 
-make_vbo(vertices, 0, 3)
-make_vbo(normals, 1, 3)
-make_vbo(texcoords, 2, 2)
+    @window.event
+    def on_key_press(symbol, modifiers):
+        nonlocal sel, input_mode, input_text, file_browser, current_dir, file_list, file_sel
+        if file_browser:
+            if symbol == key.UP and file_list: file_sel = (file_sel - 1) % len(file_list)
+            elif symbol == key.DOWN and file_list: file_sel = (file_sel + 1) % len(file_list)
+            elif symbol == key.ENTER and file_list:
+                selected = file_list[file_sel]
+                full_path = os.path.join(current_dir, selected)
+                if os.path.isdir(full_path):
+                    current_dir = full_path
+                    update_file_list()
+                    file_sel = 0
+                elif selected.lower().endswith('.obj'):
+                    launch(full_path)
+            elif symbol == key.BACKSPACE:
+                parent = os.path.dirname(current_dir)
+                if parent != current_dir:
+                    current_dir = parent
+                    update_file_list()
+                    file_sel = 0
+            elif symbol == key.SLASH:
+                current_dir = os.path.abspath(os.sep)
+                update_file_list()
+                file_sel = 0
+            elif symbol == key.ESCAPE:
+                file_browser = False
+        elif input_mode:
+            if symbol == key.ENTER:
+                p = input_text.strip()
+                if p and os.path.isfile(p) and p.lower().endswith(".obj"):
+                    launch(p)
+                input_mode = False
+                input_text = ""
+            elif symbol == key.BACKSPACE:
+                input_text = input_text[:-1]
+            elif symbol == key.ESCAPE:
+                input_mode = False
+                input_text = ""
+            elif symbol < 256 and chr(symbol).isprintable():
+                input_text += chr(symbol)
+        else:
+            if symbol == key.UP and obj_files: sel = (sel - 1) % len(obj_files)
+            elif symbol == key.DOWN and obj_files: sel = (sel + 1) % len(obj_files)
+            elif symbol == key.ENTER and obj_files: launch(os.path.join(MODELS_DIR, obj_files[sel]))
+            elif symbol == key.O:
+                file_browser = True
+                update_file_list()
+            elif symbol == key.ESCAPE:
+                window.close()
 
-ebo = gl.GLuint(0)
-gl.glGenBuffers(1, ebo)
-gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, ebo)
-gl.glBufferData(gl.GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices.ctypes.data, gl.GL_STATIC_DRAW)
+    pyglet.app.run()
 
-# --- Rotation state ---
-rot = 180.0
-
-@win.event
-def on_draw():
-    global rot
-    win.clear()
-    
-    # Projection and view
-    proj = perspective(np.radians(30), win.width / win.height, 0.1, 100.0)
-    view = np.eye(4, dtype=np.float32)
-    view[2][3] = -1    # back away
-    view[1][3] = -13.0  # lower the camera a bit
-    view = rotation_x(np.radians(20)) @ view
-
-    # Model transform: center + scale + rotation
-    model = (
-        translation_matrix(-center)
-        @ scale_matrix(scale*options.zoom)
-        @ rotation_x(np.radians(270))
-        @ rotation_z(rot)
-    )
-
-    mvp = proj @ view @ model
-
-    gl.glBindVertexArray(vao_id)
-    
-    if options.shaderMode == 1:
-        # Rainbow
-        prog_rainbow.use()
-        prog_rainbow["mvp"] = mvp.T.astype(np.float32).flatten()
-        prog_rainbow["time"] = np.float32(rot)
-        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-        gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
-
-    elif options.shaderMode == 2:
-        # Fill (light gray)
-        prog_fill.use()
-        prog_fill["mvp"] = mvp.T.astype(np.float32).flatten()
-        prog_fill["color"] = (0.5, 0.5, 0.5)  # grey
-        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-        gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
-        
-    elif options.shaderMode == 3:
-        # Fill (grey)
-        prog_fill.use()
-        prog_fill["mvp"] = mvp.T.astype(np.float32).flatten()
-        prog_fill["color"] = (0.5, 0.5, 0.5)
-        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-        gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
-
-        # Wireframe overlay (blue)
-        gl.glEnable(gl.GL_POLYGON_OFFSET_LINE)
-        gl.glPolygonOffset(-1, -1)
-        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
-        gl.glLineWidth(0.1)
-        prog_fill.use()
-        prog_fill["mvp"] = mvp.T.astype(np.float32).flatten()
-        prog_fill["color"] = (0.1, 0.3, 1.0)  # blue
-        gl.glDrawElements(gl.GL_TRIANGLES, len(indices), gl.GL_UNSIGNED_INT, None)
-        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-        gl.glDisable(gl.GL_POLYGON_OFFSET_LINE)
-
-@win.event
-def on_key_press(symbol, modifiers):
-    global ctrl_held
-    if symbol == key.T:
-        options.shaderMode = options.shaderMode % 3 + 1
-        print("Shader mode:", options.shaderMode)
-    if symbol in (pyglet.window.key.LCTRL, pyglet.window.key.RCTRL):
-        ctrl_held = True
-
-@win.event
-def on_key_release(symbol, modifiers):
-    global ctrl_held
-    if symbol in (pyglet.window.key.LCTRL, pyglet.window.key.RCTRL):
-        ctrl_held = False
-
-@win.event
-def on_mouse_scroll(x, y, scroll_x, scroll_y):
-    if ctrl_held:
-        factor = 1.1 if scroll_y > 0 else 0.9
-        options.zoom *= factor
-        options.zoom = max(0.1, min(options.zoom, 10.0))
-    else:
-        factor = 0.9 if scroll_y > 0 else 1.1
-        options.zoom *= factor
-        options.zoom = max(0.1, min(options.zoom, 10.0))
-
-def update(dt):
-    global rot
-    rot += dt
-
-pyglet.clock.schedule(update)
-pyglet.app.run()
+if __name__ == '__main__':
+    run_picker()
